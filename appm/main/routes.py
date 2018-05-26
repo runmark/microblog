@@ -1,14 +1,16 @@
+import os
 from datetime import datetime
 
-from flask import render_template, flash, redirect, url_for, request, g, jsonify, current_app
+from flask import render_template, flash, redirect, url_for, request, g, jsonify, current_app, send_from_directory
 from flask_babel import _, get_locale
 from flask_login import current_user, login_required
 from guess_language import guess_language
+from werkzeug.utils import secure_filename
 
 from appm import db
 from appm.main import bp
-from appm.main.forms import PostForm, EditProfileForm, SearchForm
-from appm.models import User, Post
+from appm.main.forms import PostForm, EditProfileForm, SearchForm, FileUploadForm, MessageForm
+from appm.models import User, Post, Message, Notification
 from appm.translate import translate
 
 
@@ -150,3 +152,75 @@ def search():
         if total > current_app.config['POSTS_PER_PAGE'] * page else None
     return render_template('search.html', title=_('Search'), posts=posts,
                            prev_url=prev_url, next_url=next_url)
+
+
+@bp.route('/send_message/<recipient>', methods=['GET', 'POST'])
+@login_required
+def send_message(recipient):
+    user = User.query.filter_by(username=recipient).first_or_404()
+    form = MessageForm()
+    if form.validate_on_submit():
+        msg = Message(author=current_user, recipient=user, body=form.message.data)
+        db.session.add(msg)
+        user.add_notification('unread_message_count', user.new_messages())
+        db.session.commit()
+        flash(_('your message has been sent to %(recipient)s.', recipient=recipient))
+        return redirect(url_for('main.user', username=recipient))
+    return render_template('send_message.html', form=form, recipient=recipient)
+
+
+@bp.route('/messages')
+@login_required
+def messages():
+    current_user.last_message_read_time = datetime.utcnow()
+    current_user.add_notification('unread_message_count', 0)
+    db.session.commit()
+    page = request.args.get('page', 1, type=int)
+    messages = current_user.received_messages.order_by(Message.timestamp.desc()).paginate(
+        page, current_app.config['POSTS_PER_PAGE'], False)
+    prev_url = url_for('main.messages', page=messages.prev_num) \
+        if messages.has_prev else None
+    next_url = url_for('main.messages', page=messages.next_num) \
+        if messages.has_next else None
+    return render_template('messages.html', messages=messages.items,
+                           prev_url=prev_url, next_url=next_url)
+
+
+@bp.route('/notifications')
+@login_required
+def notifications():
+    since = request.args.get('since', 0.0, type=float)
+    notifications = current_user.notifications.filter(
+        Notification.timestamp > since
+    ).order_by(Notification.timestamp.asc())
+    return jsonify([
+        {'name': n.name, 'data': n.get_data(), 'timestamp': n.timestamp} for n in notifications
+    ])
+
+
+@bp.route('/export_posts')
+@login_required
+def export_posts():
+    if current_user.get_task_in_progress('export_posts'):
+        flash(_('An export task in currently in progress'))
+    else:
+        current_user.launch_task('export_posts', _('Exporting posts...'))
+        db.session.commit()
+    return redirect(url_for('main.user', username=current_user.username))
+
+
+@bp.route('/upload', methods=['POST', 'GET'])
+def upload():
+    form = FileUploadForm()
+    if form.validate_on_submit():
+        f = form.file.data
+        filename = secure_filename(f.filename)
+        # f.save(os.path.join(bp.root_path, filename))
+        f.save(os.path.join('upload', filename))
+        return redirect(url_for('main.index'))
+    return render_template('upload.html', form=form)
+
+
+@bp.route('/download/<path:filename>')
+def downlaod(filename):
+    return send_from_directory(os.path.abspath('upload'), filename, as_attachment=True)

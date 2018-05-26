@@ -1,6 +1,7 @@
 from flask import request
 from flask_babel import _, lazy_gettext as _l
 from flask_wtf import FlaskForm
+from flask_wtf.file import FileRequired, FileField
 from wtforms import StringField, SubmitField, TextAreaField
 from wtforms.validators import ValidationError, DataRequired, Length
 
@@ -38,3 +39,13 @@ class SearchForm(FlaskForm):
         if 'csrf_enabled' not in kwargs:
             kwargs['csrf_enabled'] = False
         super().__init__(*args, **kwargs)
+
+
+class MessageForm(FlaskForm):
+    message = StringField(_l('Message'), validators=[DataRequired(), Length(min=0, max=140)])
+    submit = SubmitField(_l('Submit'))
+
+
+class FileUploadForm(FlaskForm):
+    file = FileField(validators=[FileRequired()])
+    submit = SubmitField(_l('Submit'))

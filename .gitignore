@@ -4,6 +4,8 @@
 .pytest_cache
 __pycache__
 *.db
+dump.rdb
 logs
 migrations
 venv
+upload
